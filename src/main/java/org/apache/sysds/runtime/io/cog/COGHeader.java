@@ -12,7 +12,9 @@ public class COGHeader {
     // If we keep this and write it again, we also need to write the additional images
     // So this could very likely not make the cut
     private ArrayList<IFDTag[]> additionalIFDs;
-
+    public COGHeader(){
+        this.isLittleEndian = false;
+    }
     public COGHeader(boolean isLittleEndian) {
         this.isLittleEndian = isLittleEndian;
         GDALMetadata = "";

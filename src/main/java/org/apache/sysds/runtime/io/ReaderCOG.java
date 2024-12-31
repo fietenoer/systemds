@@ -217,6 +217,7 @@ public class ReaderCOG extends MatrixReader{
         }
 
         // TODO: Actually read image data
+
         // We can get this from the tile offsets and tile byte counts
 
         int rows = -1;
@@ -262,7 +263,9 @@ public class ReaderCOG extends MatrixReader{
             } else if (tag == IFDTagDictionary.Compression) {
                 compression = ifd.getData()[0].intValue();
             }
+            //TODO: Read the files and add the decompression here
         }
+
         // ensure correctness
         assert (rows % tileLength == 0);
         assert (cols % tileWidth == 0);
