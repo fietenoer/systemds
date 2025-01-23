@@ -1,52 +1,26 @@
 package org.apache.sysds.runtime.io.cog;
 
-
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.api.java.JavaRDD;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
+import scala.collection.JavaConverters;
 
-
-//TODO: need help over here
-public class decompression {
+public class Decompression {
     private static final int CLEAR_CODE = 256;
     private static final int END_CODE = 257;
     private static final int INITIAL_DICT_SIZE = 258;
-    byte[] decompressed;
-    private static class BitRead {
-        private final ByteArrayInputStream input;
-        private int currentByte;
-        private int bitPosition;
 
-        public BitRead(ByteArrayInputStream input) {
-            this.input = input;
-            this.currentByte = 0;
-            this.bitPosition = 8;
-        }
-
-        public int readBits(int numBits) throws IOException {
-            int value = 0;
-            for (int i = 0; i < numBits; i++) {
-                if (bitPosition == 8) {
-                    currentByte = input.read();
-                    if (currentByte == -1) {
-                        throw new IOException("Unexpected end of stream.");
-                    }
-                    bitPosition = 0;
-                }
-                value |= ((currentByte >> (7 - bitPosition)) & 1) << (numBits - 1 - i);
-                bitPosition++;
-            }
-            return value;
-        }
-    }
-    public void decompress(byte[] compressedData) throws IOException {
+    public byte[] decompress(byte[] compressedData) throws IOException {
         ArrayList<byte[]> dictionary = new ArrayList<>();
         int dictSize = INITIAL_DICT_SIZE;
 
@@ -120,47 +94,95 @@ public class decompression {
             decompressedData[i] = output.get(i);
         }
 
-        this.decompressed =  decompressedData;
+        return decompressedData;
     }
 
-    public void createJob(byte[] data){
+    public void createJob(byte[] geoTIFFBytes) {
+        // Initialize Spark Configuration and Session
         SparkConf conf = new SparkConf()
-                .setAppName("TIFF parsing")
+                .setAppName("GeoTIFF Decompression")
                 .setMaster("local[*]") // Use local mode with all cores
-                .set("spark.executor.memory", "4g") // Executor memory
-                .set("spark.executor.cores", "2"); // Number of executor cores
+                .set("spark.executor.memory", "4g");
 
-        // Initialize SparkSession
         SparkSession spark = SparkSession.builder()
                 .config(conf)
                 .getOrCreate();
 
-
-        SparkContext sc = new SparkContext(conf); // create a new spark context to read the binary file.
-
-        // Example GeoTIFF byte data (replace with actual data)
-        byte[] geoTIFFBytes = {/* your byte array data */};
+        JavaSparkContext jsc = new JavaSparkContext(spark.sparkContext());
 
         // Split byte array into chunks for parallel processing
-        int chunkSize = 1024; // Adjust chunk size based on your processing needs
+        int chunkSize = 1024; // Adjust chunk size based on your needs
         int numChunks = (int) Math.ceil((double) geoTIFFBytes.length / chunkSize);
-        // Load a simple text file and count the words
-        JavaRDD<byte[]> byteRDD = sc.parallelize(
-                java.util.stream.IntStream.range(0, numChunks)
-                        .mapToObj(i -> {
-                            int start = i * chunkSize;
-                            int end = Math.min(start + chunkSize, geoTIFFBytes.length);
-                            byte[] chunk = new byte[end - start];
-                            System.arraycopy(geoTIFFBytes, start, chunk, 0, chunk.length);
-                            return chunk;
-                        }).toList()
-        );
-//        Dataset<Row> binaryFiles = spark.read().format("binaryFile")
-//                .option("pathGlobFilter", "*.bin") // Filter for binary files
-//                .load("path/to/binary/files");
 
+        // Create Java list of chunks
+        List<byte[]> chunks = new ArrayList<>();
+        for (int i = 0; i < numChunks; i++) {
+            int start = i * chunkSize;
+            int end = Math.min(start + chunkSize, geoTIFFBytes.length);
+            byte[] chunk = new byte[end - start];
+            System.arraycopy(geoTIFFBytes, start, chunk, 0, chunk.length);
+            chunks.add(chunk);
+        }
 
-        // Stop SparkSession
-            spark.stop();
+        // Use JavaSparkContext to parallelize the data
+        JavaRDD<byte[]> rdd = jsc.parallelize(chunks, numChunks);
+
+        // Apply LZW decompression on each chunk
+        JavaRDD<byte[]> decompressedRDD = rdd.mapPartitions(partition -> {
+            List<byte[]> decompressedChunks = new ArrayList<>();
+            while (partition.hasNext()) {
+                byte[] chunk = partition.next();
+                Decompression decompressor = new Decompression();
+                decompressedChunks.add(decompressor.decompress(chunk));
+            }
+            return decompressedChunks.iterator();
+        });
+
+        // Collect and combine the decompressed results
+        List<byte[]> decompressedChunks = decompressedRDD.collect();
+        byte[] finalDecompressedData = combineChunks(decompressedChunks);
+
+        System.out.println("Decompression completed. Data size: " + finalDecompressedData.length);
+
+        spark.stop();
+    }
+
+    private byte[] combineChunks(List<byte[]> chunks) {
+        int totalSize = chunks.stream().mapToInt(chunk -> chunk.length).sum();
+        byte[] combined = new byte[totalSize];
+        int offset = 0;
+        for (byte[] chunk : chunks) {
+            System.arraycopy(chunk, 0, combined, offset, chunk.length);
+            offset += chunk.length;
+        }
+        return combined;
+    }
+
+    private static class BitRead {
+        private final ByteArrayInputStream input;
+        private int currentByte;
+        private int bitPosition;
+
+        public BitRead(ByteArrayInputStream input) {
+            this.input = input;
+            this.currentByte = 0;
+            this.bitPosition = 8;
+        }
+
+        public int readBits(int numBits) throws IOException {
+            int value = 0;
+            for (int i = 0; i < numBits; i++) {
+                if (bitPosition == 8) {
+                    currentByte = input.read();
+                    if (currentByte == -1) {
+                        throw new IOException("Unexpected end of stream.");
+                    }
+                    bitPosition = 0;
+                }
+                value |= ((currentByte >> (7 - bitPosition)) & 1) << (numBits - 1 - i);
+                bitPosition++;
+            }
+            return value;
+        }
     }
 }
