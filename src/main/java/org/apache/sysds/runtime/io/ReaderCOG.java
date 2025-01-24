@@ -344,10 +344,11 @@ public class ReaderCOG extends MatrixReader{
 
             // TODO: If the tile is compressed, decompress the currentTileData here
 
-            if (compression == 8) {
+            if (compression == 5) {
                 Decompression decomp = new Decompression();
-                //currentTileData = COGCompressionUtils.decompressDeflate(currentTileData);
                 currentTileData = decomp.createJob(currentTileData);
+            } else if (compression == 8) {
+                currentTileData = COGCompressionUtils.decompressDeflate(currentTileData);
             }
 
             int pixelsRead = 0;
