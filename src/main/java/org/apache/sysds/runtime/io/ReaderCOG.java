@@ -346,7 +346,7 @@ public class ReaderCOG extends MatrixReader{
 
             if (compression == 5) {
                 Decompression decomp = new Decompression();
-                currentTileData = decomp.createJob(currentTileData);
+                currentTileData = decomp.decompress(currentTileData);
             } else if (compression == 8) {
                 currentTileData = COGCompressionUtils.decompressDeflate(currentTileData);
             }
